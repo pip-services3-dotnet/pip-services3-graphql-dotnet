@@ -1,0 +1,85 @@
+###############################################################################################
+## Common types
+
+input PagingParams {
+	skip: Long,
+	take: Long,
+	total: Boolean!
+}
+
+input SortParams {
+	data: [SortField!]
+}
+
+input SortField {
+	name: String!,
+	ascending: Boolean!
+}
+
+###############################################################################################
+## Query types
+
+type DataPage {
+	total: Long,
+	data: [Dummy!]
+}
+
+type DummyParam {
+	name: String,
+	value: Float
+}
+
+type DummyItem {
+	name: String,
+	count: Int
+}
+
+type Dummy {
+	id: String!,
+	key: String,
+	content: String,
+	flag: Boolean,
+	param: DummyParam,
+	items: [DummyItem!],
+	tags: [String],
+	date: DateTime,
+	#old: Int @deprecated(reason: "Don't need anymore!")
+}
+
+###############################################################################################
+## Mutation types
+
+input DummyParamInput {
+	name: String,
+	value: Float
+}
+
+input DummyItemInput {
+	name: String,
+	count: Int
+}
+
+input DummyInput {
+	id: String,
+	key: String,
+	content: String,
+	flag: Boolean,
+	param: DummyParamInput,
+	items: [DummyItemInput!],
+	tags: [String],
+	date: DateTime
+}
+
+###############################################################################################
+type Query {
+	dummies(correlationId: String, filter: String, paging: PagingParams, sort: SortParams): DataPage!
+	dummy(correlationId: String, id: String!): Dummy
+	raiseException(correlationId: String): Boolean
+	ping(correlationId: String): Boolean
+}
+
+type Mutation {
+	createDummy(correlationId: String, dummy: DummyInput!): Dummy!
+	updateDummy(correlationId: String, dummy: DummyInput!): Dummy!
+	deleteDummy(correlationId: String, id: String!): Dummy
+}

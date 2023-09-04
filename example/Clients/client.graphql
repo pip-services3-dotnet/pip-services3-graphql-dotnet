@@ -1,0 +1,32 @@
+query dummy($correlationId: String, $id: String!) { 
+	dummy(correlationId: $correlationId, id: $id) { 
+		id key content param { name } 
+	} 
+}
+
+query dummies($correlationId: String, $filter: String, $paging: PagingParams) { 
+	dummies(correlationId: $correlationId, filter: $filter, paging: $paging) { 
+		data { 
+			id key content param { name }  
+		} 
+		total 
+	} 
+}
+
+mutation createDummy($correlationId: String, $dummy: DummyInput!) { 
+	createDummy(correlationId: $correlationId, dummy: $dummy) { 
+		id key content 
+	} 
+}
+
+mutation updateDummy($correlationId: String, $dummy: DummyInput!) {
+	updateDummy(correlationId: $correlationId, dummy: $dummy) { 
+		id key content 
+	} 
+}
+
+mutation deleteDummy($correlationId: String, $id: String!) { 
+	deleteDummy(correlationId: $correlationId, id: $id) { 
+		id key content 
+	} 
+}

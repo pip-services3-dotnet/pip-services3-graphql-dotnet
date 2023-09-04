@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>PipServices3.GraphQL.Example</AssemblyName>
+    <RootNamespace>PipServices3.GraphQL</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\src.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Clients\client.graphql" />
+    <None Remove="schema.graphql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Clients\client.graphql" />
+    <EmbeddedResource Include="Services\schema.graphql" />
+  </ItemGroup>
+</Project>
