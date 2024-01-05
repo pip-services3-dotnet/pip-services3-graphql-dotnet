@@ -3,10 +3,11 @@ using PipServices3.GraphQL.Data;
 
 namespace PipServices3.GraphQL.Services.Types
 {
-	public class DummyItemType: ObjectGraphType<DummyItem>
+	public class DummyItemInputType : InputObjectGraphType<DummyItem>
 	{
-		public DummyItemType() 
+		public DummyItemInputType() 
 		{
+			Name = "DummyItemInput";
 			Field(x => x.Name).Description("The name of the DummyItem.");
 			Field(x => x.Count).Description("The count of the DummyItem.");
 		}

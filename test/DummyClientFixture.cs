@@ -1,4 +1,6 @@
-﻿using System.Threading.Tasks;
+﻿using System.Collections.Generic;
+using System.Threading.Tasks;
+using PipServices3.Commons.Data;
 using PipServices3.GraphQL.Data;
 using Xunit;
 
@@ -36,7 +38,7 @@ namespace PipServices3.GraphQL
             Assert.Equal(_dummy2.Content, dummy2.Content);
 
             // Get all dummies
-            var dummies = await _client.GetPageByFilterAsync("3", null, null);
+            var dummies = await _client.GetPageByFilterAsync("3", null, null, new ProjectionParams { "data.id" }, new SortParams(new[] { new SortField("id", true) }));
             Assert.NotNull(dummies);
             Assert.True(dummies.Data.Count >= 2);
 

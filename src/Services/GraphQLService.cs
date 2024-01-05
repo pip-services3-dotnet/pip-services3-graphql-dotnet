@@ -1,21 +1,33 @@
 ﻿using System;
-using System.Diagnostics;
+using System.Collections.Generic;
+using System.Dynamic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
-using HotChocolate;
-using HotChocolate.AspNetCore;
-using HotChocolate.Execution.Configuration;
+using GraphQL;
+using GraphQL.Resolvers;
+using GraphQL.SystemTextJson;
+using GraphQL.Transport;
+using GraphQL.Types;
+using GraphQL.Utilities;
+using GraphQL.Utilities.Federation;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Diagnostics;
-using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using PipServices3.Commons.Config;
+using PipServices3.Commons.Data;
 using PipServices3.Commons.Errors;
 using PipServices3.Commons.Refer;
 using PipServices3.Commons.Run;
+using PipServices3.Commons.Validate;
 using PipServices3.Components.Count;
 using PipServices3.Components.Log;
 using PipServices3.GraphQL.Common;
+using PipServices3.GraphQL.Types;
 using PipServices3.Rpc.Services;
+using Schema = GraphQL.Types.Schema;
 
 namespace PipServices3.GraphQL.Services
 {
@@ -82,7 +94,7 @@ namespace PipServices3.GraphQL.Services
 	/// Console.Out.WriteLine("The GraphQL service is running on port 8080");
 	/// </code>
 	/// </example>
-	public abstract class GraphQLService : IOpenable, IConfigurable, IReferenceable, IUnreferenceable, IInitializable
+	public abstract class GraphQLService : IOpenable, IConfigurable, IReferenceable, IUnreferenceable, IRegisterable, IInitializable
     {
         private static readonly ConfigParams _defaultConfig = ConfigParams.FromTuples(
             "base_route", "",
@@ -108,33 +120,50 @@ namespace PipServices3.GraphQL.Services
         /// <summary>
         /// The base route.
         /// </summary>
-        protected string _baseRoute = "/graphql";
+        protected string _baseRoute;
 		/// <summary>
 		/// The schema
 		/// </summary>
-		protected string _schemaFile;
+		protected Schema _schema;
 
 		protected ConfigParams _config;
         private IReferences _references;
         private bool _localEndpoint;
         private bool _opened;
-		private bool _isSchemaFirst;
+		private IGraphQLTextSerializer _serializer;
+		private DefaultFieldResolver _fieldResolver;
 
-		protected bool _allowIntrospection = false;
-		protected int _maxExecutionDepth = 0;
-		protected bool _enableTool = false;
-		protected bool _authorization = false;
 		protected string _queryTypeName = "Query";
 		protected string _mutationTypeName = "Mutation";
-		protected bool _enableQuery = true;
-		protected bool _enableMutation = true;
+		protected bool _enableTool = false;
 		protected bool _debug = false;
-		protected string _debugName = "GraphQLService";
 
-		public GraphQLService(string schemaFile = null)
+        public GraphQLService()
+        { 
+        }
+
+		public GraphQLService(string schemaFile)
         {
-            _schemaFile = schemaFile;
-			_isSchemaFirst = !string.IsNullOrWhiteSpace(schemaFile);
+            _schema = CreateSchema(schemaFile);
+            Intitialize();
+		}
+		
+        public GraphQLService(Schema schema)
+		{
+			_schema = schema ?? throw new ArgumentNullException(nameof(schema));
+            Intitialize();
+		}
+
+        private void Intitialize()
+        {
+			_serializer = new GraphQLSerializer();
+			_fieldResolver = new DefaultFieldResolver(_schema);
+		}
+
+        public void SetSchema(Schema schema)
+        {
+			_schema = schema ?? throw new ArgumentNullException(nameof(schema));
+			Intitialize();
 		}
 
 		/// <summary>
@@ -147,16 +176,8 @@ namespace PipServices3.GraphQL.Services
             _dependencyResolver.Configure(config);
 
             _baseRoute = config.GetAsStringWithDefault("base_route", _baseRoute);
-			_allowIntrospection = config.GetAsBooleanWithDefault("allow_introspection", _allowIntrospection);
-			_maxExecutionDepth = config.GetAsIntegerWithDefault("max_execution_depth", _maxExecutionDepth);
 			_enableTool = config.GetAsBooleanWithDefault("enable_tool", _enableTool);
-			_authorization = config.GetAsBooleanWithDefault("authorization", _authorization);
-			_queryTypeName = config.GetAsStringWithDefault("query_type_name", _queryTypeName);
-			_mutationTypeName = config.GetAsStringWithDefault("mutation_type_name", _mutationTypeName);
-			_enableQuery = config.GetAsBooleanWithDefault("enable_query", _enableQuery);
-			_enableMutation = config.GetAsBooleanWithDefault("enable_mutation", _enableMutation);
 			_debug = config.GetAsBooleanWithDefault("debug", _debug);
-			_debugName = config.GetAsStringWithDefault("debug_name", _debugName);
 		}
 
         /// <summary>
@@ -165,51 +186,83 @@ namespace PipServices3.GraphQL.Services
         /// <param name="references">references to locate the component dependencies.</param>
         public virtual void SetReferences(IReferences references)
         {
-			_references = references;
+            _references = references;
 
-			_logger.SetReferences(references);
-			_counters.SetReferences(references);
-			_dependencyResolver.SetReferences(references);
+            _logger.SetReferences(references);
+            _counters.SetReferences(references);
+            _dependencyResolver.SetReferences(references);
 
-			// Get endpoint
-			_endpoint = _dependencyResolver.GetOneOptional("endpoint") as HttpEndpoint;
-			_localEndpoint = _endpoint == null;
+            // Get endpoint
+            _endpoint = _dependencyResolver.GetOneOptional("endpoint") as HttpEndpoint;
+            _localEndpoint = _endpoint == null;
 
-			// Or create a local one
-			_endpoint ??= CreateLocalEndpoint();
+            // Or create a local one
+            if (_endpoint == null) _endpoint = CreateLocalEndpoint();
 
-			// Add registration callback to the endpoint
+            // Add registration callback to the endpoint
+            _endpoint.Register(this);
 			_endpoint.Initialize(this);
-			if (_debug) Console.WriteLine($"{_debugName}. Endpoint initialized");
+
+			if (_schema is IReferenceable schema) 
+                schema.SetReferences(references);
 		}
 
-		/// <summary>
-		/// Unsets (clears) previously set references to dependent components.
-		/// </summary>
-		public virtual void UnsetReferences()
+        /// <summary>
+        /// Unsets (clears) previously set references to dependent components.
+        /// </summary>
+        public virtual void UnsetReferences()
         {
             // Remove registration callback from endpoint
             if (_endpoint != null)
             {
-                _endpoint.Uninitialize(this);
-                _endpoint = null;
+                _endpoint.Unregister(this);
+				_endpoint.Uninitialize(this);
+				_endpoint = null;
             }
         }
 
-		private HttpEndpoint CreateLocalEndpoint()
-		{
-			var endpoint = new HttpEndpoint();
+        private HttpEndpoint CreateLocalEndpoint()
+        {
+            var endpoint = new HttpEndpoint();
 
-			if (_config != null)
-				endpoint.Configure(_config);
+            if (_config != null)
+                endpoint.Configure(_config);
 
-			if (_references != null)
-				endpoint.SetReferences(_references);
+            if (_references != null)
+                endpoint.SetReferences(_references);
 
-			if (_debug) Console.WriteLine($"{_debugName}. Created local endpoint");
+            return endpoint;
+        }
 
-			return endpoint;
-		}
+        /// <summary>
+        /// Adds instrumentation to log calls and measure call time. It returns a CounterTiming
+        /// object that is used to end the time measurement.
+        /// </summary>
+        /// <param name="correlationId">(optional) transaction id to trace execution through call chain.</param>
+        /// <param name="methodName">a method name.</param>
+        /// <returns>CounterTiming object to end the time measurement.</returns>
+        protected CounterTiming Instrument(string correlationId, string methodName)
+        {
+            _logger.Trace(correlationId, "Executing {0} method", methodName);
+            _counters.IncrementOne(methodName + ".exec_count");
+            return _counters.BeginTiming(methodName + ".exec_time");
+        }
+
+        /// <summary>
+        /// Adds instrumentation to error handling.
+        /// </summary>
+        /// <param name="correlationId">(optional) transaction id to trace execution through call chain.</param>
+        /// <param name="methodName">a method name.</param>
+        /// <param name="ex">Error that occured during the method call</param>
+        /// <param name="rethrow">True to throw the exception</param>
+        protected void InstrumentError(string correlationId, string methodName, Exception ex, bool rethrow = false)
+        {
+            _logger.Error(correlationId, ex, "Failed to execute {0} method", methodName);
+            _counters.IncrementOne(methodName + ".exec_errors");
+
+            if (rethrow)
+                throw ex;
+        }
 
         /// <summary>
         /// Checks if the component is opened.
@@ -230,26 +283,25 @@ namespace PipServices3.GraphQL.Services
 			if (IsOpen()) return;
 
 			if (_endpoint == null)
-			{
-				_endpoint = CreateLocalEndpoint();
+            {
+                _endpoint = CreateLocalEndpoint();
+                _endpoint.Register(this);
 				_endpoint.Initialize(this);
 				_localEndpoint = true;
-			}
+            }
 
-			if (_localEndpoint)
-			{
-				await _endpoint.OpenAsync(correlationId).ContinueWith(task =>
-				{
-					_opened = task.Exception == null;
-
-					if (_debug) Console.WriteLine($"{_debugName}. Opened");
-				});
-			}
-			else
-			{
-				_opened = true;
-			}
-		}
+            if (_localEndpoint)
+            {
+                await _endpoint.OpenAsync(correlationId).ContinueWith(task =>
+                {
+                    _opened = task.Exception == null;
+                });
+            }
+            else
+            {
+                _opened = true;
+            }
+        }
 
         /// <summary>
         /// Closes component and frees used resources.
@@ -262,7 +314,7 @@ namespace PipServices3.GraphQL.Services
             {
                 if (_endpoint == null)
                 {
-                    throw new InvalidStateException(correlationId, "NO_ENDPOINT", "HTTP endpoint is missing");
+                    throw new InvalidStateException(correlationId, "NO_ENDPOINT", "GraphQL endpoint is missing");
                 }
 
                 if (_localEndpoint)
@@ -270,9 +322,7 @@ namespace PipServices3.GraphQL.Services
                     _endpoint.CloseAsync(correlationId);
                 }
 
-				if (_debug) Console.WriteLine($"{_debugName}. Closed");
-
-				_opened = false;
+                _opened = false;
             }
 
             return Task.Delay(0);
@@ -280,134 +330,213 @@ namespace PipServices3.GraphQL.Services
 
 		public virtual void ConfigureServices(IServiceCollection services)
 		{
-			if (_authorization) services.AddAuthorization();
-
-			var requestExecutorBuilder = services
-				.AddRouting()
-				.AddGraphQLServer();
-
-			Register(requestExecutorBuilder);
-
-			if (_debug) Console.WriteLine($"{_debugName}. Configured services");
 		}
 
 		public virtual void ConfigureApplication(IApplicationBuilder applicationBuilder)
 		{
-			applicationBuilder.UseExceptionHandler(exceptionHandlerApp =>
-			{
-				exceptionHandlerApp.Run(async context =>
-				{
-					var exceptionHandlerPathFeature =
-						context.Features.Get<IExceptionHandlerPathFeature>();
-
-					if (exceptionHandlerPathFeature != null)
-					{
-						await GraphQLResponseHelper.SendErrorAsync(context.Response, exceptionHandlerPathFeature?.Error);
-					}
-				});
-			});
-
-			applicationBuilder.UseRouting();
-
-			applicationBuilder.UseEndpoints(endpoints =>
-			{
-				endpoints.MapGraphQL(_baseRoute).WithOptions(new GraphQLServerOptions
-				{
-					Tool = 
-					{
-						Enable = _enableTool
-					}
-				});
-			});
-
-			if (_authorization) applicationBuilder.UseAuthorization();
-
-			if (_debug) Console.WriteLine($"{_debugName}. Configured application");
-		}
-
-		public virtual void Register(IRequestExecutorBuilder builder)
-		{
-			RegisterSchema(builder);
-
-			var controller = RegisterController(builder);
-			if (controller != null)
-			{
-				var controllerType = controller.GetType();
-				if (_enableQuery) RegisterQuery(builder, controllerType, _queryTypeName);
-				if (_enableMutation) RegisterMutation(builder, controllerType, _mutationTypeName);
+            if (_enableTool)
+            { 
+                applicationBuilder.UseGraphQLPlayground(_baseRoute);
 			}
-
-			if (!_allowIntrospection) builder.AddIntrospectionAllowedRule();
-			if (_maxExecutionDepth > 0) builder.AddMaxExecutionDepthRule(_maxExecutionDepth, true);
-			if (_authorization) builder.AddAuthorization();
-			
-			RegisterInterceptor(builder);
 		}
 
-		protected void RegisterSchema(IRequestExecutorBuilder builder)
+		public virtual void Register()
+        {
+			RegisterTypes();
+			RegisterController();
+			RegisterFieldMiddleware();
+
+			RegisterRoute("post", "", async (HttpRequest request, HttpResponse response, RouteData routeData) =>
+            {
+                try
+                {
+					var graphQLRequest = GraphQLRequestHelper.GetRequest(request, _serializer);
+
+                    if (_debug) _logger.Debug("GraphQLService", "{0}, {1}", graphQLRequest.Query, graphQLRequest.Variables);
+
+                    IDocumentExecuter executer = new DocumentExecuter();
+                    var result = await executer.ExecuteAsync(_ =>
+                    {
+                        _.Schema = _schema;
+                        _.Query = graphQLRequest.Query;
+                        _.Variables = graphQLRequest.Variables;
+                        _.ThrowOnUnhandledException = true;
+                        _.EnableMetrics = false;
+						_.UserContext = new Dictionary<string, object>
+						{
+							{ "HttpRequest", request },
+							{ "GraphQLRequest", graphQLRequest }
+						};
+                    });
+
+                    if (result.Executed) await GraphQLResponseSender.SendResultAsync(response, _serializer, result);
+                    else if (result.Errors.Count > 0) throw result.Errors.First();
+                    else await GraphQLResponseSender.SendErrorAsync(response, _serializer, result);
+				}
+                catch (Exception ex) 
+                {
+					if (_debug) _logger.Error("GraphQLService", ex);
+					await GraphQLResponseSender.SendErrorAsync(response, ex);
+                }
+			});
+        }
+
+		protected virtual Schema CreateSchema(string schemaFile)
 		{
-			if (!string.IsNullOrWhiteSpace(_schemaFile))
+			var schemaContent = ResourceHelper.LoadEmbeddedFile(schemaFile, this.GetType());
+			var schema = Schema.For(schemaContent);
+
+            return schema;
+		}
+
+		protected virtual void RegisterTypes()
+		{
+			_schema.RegisterType<TimeSpanGraphType>();
+			_schema.RegisterType<AnyGraphType>();
+		}
+
+		protected void RegisterEnum<TEnum>()
+			where TEnum : Enum
+		{
+			_schema.ReplaceScalar(new EnumGraphType<TEnum>());
+		}
+
+		protected void RegisterFieldMiddleware()
+		{
+			_schema.FieldMiddleware.Use(next =>
 			{
-				var schemaContent = ResourceHelper.LoadEmbeddedFile(_schemaFile, GetType());
-				builder.AddDocumentFromString(schemaContent);
+				return async context =>
+				{
+					if (context?.Source is IDictionary<string, object> expandoObject)
+					{
+						foreach (var kvp in expandoObject)
+						{
+							var fieldName = GraphQLRequestHelper.ConvertCamelToSnake(context.FieldDefinition.Name);
+							if (string.Equals(kvp.Key, fieldName, StringComparison.InvariantCultureIgnoreCase))
+							{
+								return kvp.Value;
+							}
+						}
 
-				if (_debug) Console.WriteLine($"{_debugName}. Schema file registered (fileName = {_schemaFile}, content.Length = {schemaContent.Length})");
-				return;
-			}
+						return null;
+					}
 
-			if (_debug) Console.WriteLine($"{_debugName}. Schema file not registered");
+					return await next(context);
+				};
+			});
 		}
 
-		protected object RegisterController(IRequestExecutorBuilder builder)
-		{
+		protected void RegisterController()
+        {
 			var controller = _dependencyResolver.GetOneOptional("controller");
-			if (controller != null)
-			{
-				builder.Services.AddSingleton(controller.GetType(), (provider) => controller);
-			}
+            if (controller != null)
+            {
+				var methods = controller.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance);
+				foreach (MethodInfo method in methods)
+				{
+					var path = FormatPath(method.Name);
 
-			if (_debug) Console.WriteLine($"{_debugName}. Controller registered ({controller.GetType().FullName})");
+					if (string.IsNullOrWhiteSpace(path)) continue;
 
-			return controller;
-		}
+					var parameters = method.GetParameters();
+					async Task<object> func(IResolveFieldContext context)
+					{
+						object[] args = new object[parameters.Length];
 
-		protected void RegisterQuery(IRequestExecutorBuilder builder, Type runtimeType, string typeName = "Query")
-		{
-			if (_isSchemaFirst) 
-				builder.BindRuntimeType(runtimeType, typeName);
-			else
-				builder.AddQueryType(runtimeType);
+						for (int i = 0; i < parameters.Length; i++)
+						{
+							args[i] = GetArgumentValue(context, parameters[i]);
+						}
 
-			if (_debug) Console.WriteLine($"{_debugName}. Query registered (runtimeType = {runtimeType.FullName}, typeName = {typeName})");
-		}
+						var task = (Task)method.Invoke(controller, args);
+						await task.ConfigureAwait(false);
 
-		protected void RegisterMutation(IRequestExecutorBuilder builder, Type runtimeType, string typeName = "Mutation")
-		{
-			if (_isSchemaFirst) 
-				builder.BindRuntimeType(runtimeType, typeName);
-			else
-				builder.AddMutationType(runtimeType);
+						return ((dynamic)task).Result;
+					}
 
-			if (_debug) Console.WriteLine($"{_debugName}. Mutation registered (runtimeType = {runtimeType.FullName}, typeName = {typeName})");
-		}
+					var registered = method.Name.StartsWith("Get")
+						? TryRegisterQuery(path, func)
+						: TryRegisterMutation(path, func);
 
-		protected void RegisterInterceptor(IRequestExecutorBuilder builder)
-		{
-			var interceptor = new HttpRequestInterceptor();
-			var nextAction = CreateInterceptor(interceptor.Action);
-
-			if (nextAction != null)
-			{
-				interceptor.Action = nextAction;	
-				builder.AddHttpRequestInterceptor(provider => interceptor);
-
-				if (_debug) Console.WriteLine($"{_debugName}. Interceptor registered");
+					if (_debug)
+					{
+						 if (registered) _logger.Debug("GraphQLService", $"method {method.Name} with path {path}");
+						 else _logger.Debug("GraphQLService", $"method {method.Name} skipped");
+					}
+				}
 			}
 		}
 
-		protected virtual GraphQLInterceptor CreateInterceptor(GraphQLInterceptor nextAction)
+		private string FormatPath(string methodName)
 		{
-			return null;
+			if (methodName == null) return null;
+
+			var path = methodName;
+			if (path.StartsWith("Get")) path = path.Substring(3);
+			if (path.EndsWith("Async")) path = path.Substring(0, path.Length - 5);
+
+			return _schema.NameConverter.NameForField(path, _schema.Query); 
+		}
+
+		private static object GetArgumentValue(IResolveFieldContext context, ParameterInfo parameterInfo)
+		{
+			if (parameterInfo.ParameterType == typeof(FilterParams)) return GraphQLRequestHelper.GetFilterParams(context);
+			if (parameterInfo.ParameterType == typeof(PagingParams)) return GraphQLRequestHelper.GetPagingParams(context);
+			if (parameterInfo.ParameterType == typeof(SortParams)) return GraphQLRequestHelper.GetSortParams(context);
+			if (parameterInfo.ParameterType == typeof(ProjectionParams)) return GraphQLRequestHelper.GetProjectionParams(context);
+
+			return context.GetArgument(parameterInfo.ParameterType, parameterInfo.Name, parameterInfo.DefaultValue);
+		}
+
+		protected void RegisterQuery(string path, Func<IResolveFieldContext, Task<object>> resolverFunc)
+		{
+			_fieldResolver.RegisterQuery(_queryTypeName, path, resolverFunc);
+		}
+
+		protected void RegisterMutation(string path, Func<IResolveFieldContext, Task<object>> resolverFunc)
+		{
+			_fieldResolver.RegisterMutation(_mutationTypeName, path, resolverFunc);
+		}
+
+		protected bool TryRegisterQuery(string path, Func<IResolveFieldContext, Task<object>> resolverFunc)
+		{
+			return _fieldResolver.TryRegisterQuery(_queryTypeName, path, resolverFunc);
+		}
+
+		protected bool TryRegisterMutation(string path, Func<IResolveFieldContext, Task<object>> resolverFunc)
+		{
+			return _fieldResolver.TryRegisterMutation(_mutationTypeName, path, resolverFunc);
+		}
+
+		/// <summary>
+		/// Registers a route in HTTP endpoint.
+		/// </summary>
+		/// <param name="method">HTTP method: "get", "head", "post", "put", "delete"</param>
+		/// <param name="route">a command route. Base route will be added to this route</param>
+		/// <param name="action">an action function that is called when operation is invoked.</param>
+		private void RegisterRoute(string method, string route,
+			Func<HttpRequest, HttpResponse, RouteData, Task> action)
+		{
+			if (_endpoint == null) return;
+
+			route = AppendBaseRoute(route);
+			_endpoint.RegisterRoute(method, route, action);
+		}
+
+		private string AppendBaseRoute(string route)
+		{
+			if (!string.IsNullOrEmpty(_baseRoute))
+			{
+				var baseRoute = _baseRoute;
+				if (string.IsNullOrEmpty(route))
+					route = "/";
+				if (route[0] != '/')
+					route = "/" + route;
+				if (baseRoute[0] != '/') baseRoute = '/' + baseRoute;
+				route = baseRoute + route;
+			}
+
+			return route.TrimEnd('/');
 		}
 	}
 }

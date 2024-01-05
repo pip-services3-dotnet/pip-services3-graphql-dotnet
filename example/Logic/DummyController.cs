@@ -1,9 +1,13 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Dynamic;
+using System.Linq;
 using System.Threading.Tasks;
 
 using PipServices3.Commons.Data;
 using PipServices3.Commons.Errors;
 using PipServices3.GraphQL.Data;
+using PipServices3.GraphQL.Services;
 
 namespace PipServices3.GraphQL.Logic
 {
@@ -12,24 +16,62 @@ namespace PipServices3.GraphQL.Logic
         private readonly object _lock = new object();
         private readonly IList<Dummy> _entities = new List<Dummy>();
 
-		public async Task<DataPage<Dummy>> GetDummiesAsync(string correlationId, FilterParams filter, PagingParams paging)
+        public async Task<DataPage<ExpandoObject>> GetDummiesExpandoAsync(string correlationId, FilterParams filter, PagingParams paging, SortParams sort, ProjectionParams projection)
         {
-            filter = filter != null ? filter : new FilterParams();
-            var key = filter.GetAsNullableString("key");
+            var page = await GetDummiesAsync(correlationId, filter, paging, sort, projection);
+            return new DataPage<ExpandoObject>(page.Data.Select(x => ConvertToExpandoObject(x)).ToList(), page.Total);
+        }
 
-            paging = paging != null ? paging : new PagingParams();
+		static ExpandoObject ConvertToExpandoObject(object obj)
+		{
+			var expandoObject = new ExpandoObject();
+			var expandoDict = (IDictionary<string, object>)expandoObject;
+
+			foreach (var property in obj.GetType().GetProperties())
+			{
+                var name = GraphQLRequestHelper.ConvertCamelToSnake(property.Name);
+                var value = property.GetValue(obj);
+                
+                expandoDict[name] = value;
+			}
+
+			return expandoObject;
+		}
+
+		public async Task<DataPage<Dummy>> GetDummiesAsync(string correlationId, FilterParams filter, PagingParams paging, SortParams sort, ProjectionParams projection)
+        {
+            filter ??= new FilterParams();
+            sort ??= new SortParams();
+			paging ??= new PagingParams();
+            projection ??= new ProjectionParams();  
+
+			var key = filter.GetAsNullableString("key");
+
             var skip = paging.GetSkip(0);
             var take = paging.GetTake(100);
 
             var result = new List<Dummy>();
+            IEnumerable<Dummy> entities = _entities;
 
-            lock (_lock)
+            if (key != null)
             {
-                foreach (var entity in _entities)
+                entities = entities.Where(x => key.Equals(x.Key));
+			}
+            
+            if (sort.Count > 0)
+            { 
+                var keySort = sort.FirstOrDefault(x => string.Equals(x.Name, "key", StringComparison.InvariantCultureIgnoreCase));
+                if (keySort != null)
                 {
-                    if (key != null && !key.Equals(entity.Key))
-                        continue;
+                    if (keySort.Ascending) entities = entities.OrderBy(x => x.Key);
+                    else entities = entities.OrderByDescending(x => x.Key);
+				}
+            }
 
+			lock (_lock)
+            {
+                foreach (var entity in entities)
+                {
                     skip--;
                     if (skip >= 0) continue;
 
@@ -43,7 +85,7 @@ namespace PipServices3.GraphQL.Logic
             return await Task.FromResult(new DataPage<Dummy>(result, paging.Total ? _entities.Count : null));
         }
 
-		public async Task<Dummy> GetDummyAsync(string correlationId, string id)
+		public async Task<Dummy> GetDummyAsync(string correlationId, string id, ProjectionParams projection)
         {
             await Task.Delay(0);
 

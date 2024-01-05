@@ -41,7 +41,7 @@ namespace PipServices3.GraphQL.Services
 				"dummy(correlationId: $correlationId, id: $id) { id key content param { name } } }" },
 		};
 
-		private DummySchemaFirstGraphQLService _service;
+		private DummySchemaFirstGraphQLServiceV1 _service;
         private DummyHttpClient _client;
 
 		private HttpEndpoint _httpEndpoint;
@@ -49,7 +49,7 @@ namespace PipServices3.GraphQL.Services
 		public DummyGraphQLServiceTest()
         {
 			_httpEndpoint = new HttpEndpoint();
-			_service = new DummySchemaFirstGraphQLService();
+			_service = new DummySchemaFirstGraphQLServiceV1();
 			_client = new DummyHttpClient(GraphQLConfig, Queries, "/graphql");
 
 			var references = References.FromTuples(

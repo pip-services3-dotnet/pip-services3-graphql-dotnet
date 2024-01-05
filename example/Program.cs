@@ -20,7 +20,9 @@ namespace PipServices3.GraphQL
 			Key = "key1",
 			Date = DateTime.UtcNow.AddDays(-1),
 			Flag = true,
-			Content = "value1"
+			Content = "value1",
+			AnyField = true,
+			DummyType = DummyTypes.None
 		};
 
 		private static Dummy dummy2 = new Dummy
@@ -29,7 +31,9 @@ namespace PipServices3.GraphQL
 			Key = "key2",
 			Date = DateTime.UtcNow,
 			Flag = true,
-			Content = "value2"
+			Content = "value2",
+			AnyField = 1,
+			DummyType = DummyTypes.Type2
 		};
 
 		private static Dummy dummy3 = new Dummy
@@ -38,7 +42,9 @@ namespace PipServices3.GraphQL
 			Key = "key3",
 			Date = DateTime.UtcNow.AddDays(1),
 			Flag = false,
-			Content = "value3"
+			Content = "value3",
+			AnyField = "some string",
+			DummyType = DummyTypes.Type1
 		};
 
 		static void Main(string[] args)
@@ -50,7 +56,7 @@ namespace PipServices3.GraphQL
 		{
 			var httpEnpoint = new HttpEndpoint();
 			var controller = new DummyController();
-			var service = new DummySchemaFirstGraphQLService();
+			var service = new DummySchemaFirstGraphQLServiceV2();
 
 			var logger = new ConsoleLogger();
 
@@ -66,7 +72,8 @@ namespace PipServices3.GraphQL
 				"base_route", "/graphql",
 				"allow_introspection", "true",
 				"max_execution_depth", 5,
-				"enable_tool", "true"
+				"enable_tool", "true",
+				"debug", "true"
 			));
 
 			var references = References.FromTuples(
@@ -88,7 +95,7 @@ namespace PipServices3.GraphQL
 			Console.ReadLine();
 		}
 
-		private static async Task ClientSideAsync(ConfigParams config, Components.Log.ILogger logger)
+		private static async Task ClientSideAsync(ConfigParams config, ILogger logger)
 		{
 			try
 			{
@@ -107,6 +114,15 @@ namespace PipServices3.GraphQL
 				dummy = await client.CreateAsync(IdGenerator.NextLong(), dummy1);
 				dummy = await client.CreateAsync(IdGenerator.NextLong(), dummy2);
 				dummy = await client.CreateAsync(IdGenerator.NextLong(), dummy3);
+
+				var page = await client.GetPageByFilterAsync(null, FilterParams.FromTuples("key", dummy1.Key), new PagingParams(0, 1, true), new ProjectionParams
+				{
+					"total",
+					"data.id",
+					"data.key",
+					"data.content",
+					"data.param.name"
+				}, new SortParams(new[] { new SortField("key", false) }));
 			}
 			catch (Exception ex)
 			{

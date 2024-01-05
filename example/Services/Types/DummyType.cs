@@ -1,20 +1,20 @@
-﻿using HotChocolate.Types;
+﻿using GraphQL.Types;
 using PipServices3.GraphQL.Data;
 
 namespace PipServices3.GraphQL.Services.Types
 {
-	public class DummyType : ObjectType<Dummy>
+	public class DummyType: ObjectGraphType<Dummy>
 	{
-		protected override void Configure(IObjectTypeDescriptor<Dummy> descriptor)
+		public DummyType() 
 		{
-			descriptor.Field(t => t.Id).Type<NonNullType<StringType>>();
-			descriptor.Field(t => t.Key).Type<StringType>();
-			descriptor.Field(t => t.Content).Type<StringType>();
-			descriptor.Field(t => t.Flag).Type<BooleanType>();
-			descriptor.Field(t => t.Param).Type<DummyParamType>();
-			descriptor.Field(t => t.Items).Type<ListType<NonNullType<DummyItemType>>>();
-			descriptor.Field(t => t.Tags).Type<ListType<NonNullType<StringType>>>();
-			descriptor.Field(t => t.Date).Type<DateTimeType>();
+			Field(x => x.Id);
+			Field(x => x.Key);
+			Field(x => x.Content);
+			Field(x => x.Flag);
+			Field<DummyParamType>("param").Resolve(x => x.Source);
+			Field<ListGraphType<NonNullGraphType<DummyItemType>>>("items").Resolve(x => x.Source);
+			Field<ListGraphType<StringGraphType>>("tags").Resolve(x => x.Source);
+			Field(x => x.Date);
 		}
 	}
 }

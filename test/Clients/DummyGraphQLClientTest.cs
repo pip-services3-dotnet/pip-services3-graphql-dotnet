@@ -21,13 +21,13 @@ namespace PipServices3.GraphQL.Clients
         private readonly DummyGraphQLClient _client;
         private readonly DummyClientFixture _fixture;
 
-        private readonly DummySchemaFirstGraphQLService _service;
+        private readonly DummySchemaFirstGraphQLServiceV1 _service;
 
         public DummyGraphQLClientTest()
         {
             _ctrl = new DummyController();
 
-            _service = new DummySchemaFirstGraphQLService();
+            _service = new DummySchemaFirstGraphQLServiceV1();
 
             _client = new DummyGraphQLClient();
 

@@ -31,7 +31,7 @@ dotnet add package PipServices3.GraphQL
 ## Develop
 
 For development you shall install the following prerequisites:
-* .NET SDK 6.0+
+* Core .NET SDK 3.1+
 * Visual Studio Code or another IDE of your choice
 * Docker
 

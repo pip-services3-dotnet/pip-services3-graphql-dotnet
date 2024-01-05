@@ -42,5 +42,14 @@ namespace PipServices3.GraphQL.Data
 
         [JsonProperty("date")]
         public DateTime Date { get; set; } = DateTime.MinValue.ToUniversalTime();
-    }
+
+		[JsonProperty("startTime")]
+		public TimeSpan StartTime { get; set; } = DateTime.Now - DateTime.MinValue.ToUniversalTime();
+
+		[JsonProperty("anyField")]
+        public object AnyField { get; set; }
+
+		[JsonProperty("dummyType")]
+		public DummyTypes DummyType { get; set; }
+	}
 }

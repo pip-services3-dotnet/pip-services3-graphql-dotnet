@@ -17,4 +17,9 @@ dotnet pack src/src.csproj -c Release -o ../dist
 
 $package = (Get-ChildItem -Path "../dist/*.$version.nupkg").FullName
 
-dotnet nuget push $package -s http://localhost:5555/v3/index.json -k 123key --skip-duplicate
+# Push to nuget repo
+if ($env:NUGET_KEY -ne $null) {
+    dotnet nuget push $package -s https://www.nuget.org/api/v2/package -k $env:NUGET_KEY --skip-duplicate
+} else {
+    nuget push $package -Source https://www.nuget.org/api/v2/package --skip-duplicate
+}

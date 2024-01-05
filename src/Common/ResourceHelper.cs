@@ -6,9 +6,9 @@ using System.Reflection;
 
 namespace PipServices3.GraphQL.Common
 {
-	public static class ResourceHelper
+	internal static class ResourceHelper
 	{
-		public static string LoadEmbeddedFile(string resourceName, Type type)
+		internal static string LoadEmbeddedFile(string resourceName, Type type)
 		{
 			var assembly = Assembly.GetAssembly(type);
 			var fullName = assembly.GetManifestResourceNames().FirstOrDefault(n => n.Contains(resourceName));

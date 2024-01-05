@@ -4,13 +4,8 @@ query dummy($correlationId: String, $id: String!) {
 	} 
 }
 
-query dummies($correlationId: String, $filter: String, $paging: PagingParams) { 
-	dummies(correlationId: $correlationId, filter: $filter, paging: $paging) { 
-		data { 
-			id key content param { name }  
-		} 
-		total 
-	} 
+query dummies($correlationId: String, $filter: String, $paging: PagingParams, $sort: [SortField!]) { 
+	dummies(correlationId: $correlationId, filter: $filter, paging: $paging, sort: $sort) $projection
 }
 
 mutation createDummy($correlationId: String, $dummy: DummyInput!) { 

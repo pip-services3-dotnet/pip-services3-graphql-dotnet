@@ -8,6 +8,8 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using PipServices3.Commons.Config;
+using GraphQL;
+using GraphQL.SystemTextJson;
 
 namespace PipServices3.GraphQL.Services
 {
@@ -48,6 +50,7 @@ namespace PipServices3.GraphQL.Services
 			};
 
 			var requestValue = JsonConvert.SerializeObject(requestEntity, jsonSerializerSettings);
+
 			using (var content = new StringContent(requestValue, Encoding.UTF8, "application/json"))
 			{
 				var response = await _httpClient.PostAsync($"http://{_host}:{_port}{_baseRoute}", content);
